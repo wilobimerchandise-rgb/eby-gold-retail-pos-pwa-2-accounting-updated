@@ -1,1 +1,1 @@
-# eby-gold-retail-pos-pwa-2-accounting-updated
+# eby-gold-retail-pos-pwa-2

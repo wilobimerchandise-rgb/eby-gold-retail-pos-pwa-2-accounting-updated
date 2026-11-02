@@ -2,7 +2,11 @@
 import { useState, type FormEvent } from "react";
 import { Store, Eye, EyeOff, LockKeyhole } from "lucide-react";
 
-import { supabase } from "@/lib/supabase";
+import {
+  supabase,
+  getRememberMePreference,
+  setRememberMePreference,
+} from "@/lib/supabase";
 
 interface LoginPageProps {
   onForgotPassword: () => void;
@@ -12,6 +16,9 @@ export function LoginPage({ onForgotPassword }: LoginPageProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(
+    () => getRememberMePreference(),
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -21,6 +28,9 @@ export function LoginPage({ onForgotPassword }: LoginPageProps) {
     setLoading(true);
 
     try {
+      // Apply the selected storage mode before signing in.
+      setRememberMePreference(rememberMe);
+
       const { error: loginError } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password,
@@ -31,7 +41,11 @@ export function LoginPage({ onForgotPassword }: LoginPageProps) {
       }
     } catch (loginError) {
       console.error("Login failed:", loginError);
-      setError("We could not complete your login. Please try again.");
+      setError(
+        loginError instanceof Error
+          ? loginError.message
+          : "We could not complete your login. Please try again.",
+      );
     } finally {
       setLoading(false);
     }
@@ -56,7 +70,10 @@ export function LoginPage({ onForgotPassword }: LoginPageProps) {
 
         <form onSubmit={handleSubmit} className="space-y-5">
           <div>
-            <label htmlFor="login-email" className="mb-2 block text-sm font-semibold text-slate-700">
+            <label
+              htmlFor="login-email"
+              className="mb-2 block text-sm font-semibold text-slate-700"
+            >
               Email address
             </label>
 
@@ -73,7 +90,10 @@ export function LoginPage({ onForgotPassword }: LoginPageProps) {
           </div>
 
           <div>
-            <label htmlFor="login-password" className="mb-2 block text-sm font-semibold text-slate-700">
+            <label
+              htmlFor="login-password"
+              className="mb-2 block text-sm font-semibold text-slate-700"
+            >
               Password
             </label>
 
@@ -100,8 +120,27 @@ export function LoginPage({ onForgotPassword }: LoginPageProps) {
             </div>
           </div>
 
+          <div className="flex items-center justify-between gap-3">
+            <label
+              htmlFor="remember-me"
+              className="flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-700"
+            >
+              <input
+                id="remember-me"
+                type="checkbox"
+                checked={rememberMe}
+                onChange={(event) => setRememberMe(event.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-indigo-700 focus:ring-indigo-600"
+              />
+              Remember me
+            </label>
+          </div>
+
           {error && (
-            <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+            <div
+              role="alert"
+              className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700"
+            >
               {error}
             </div>
           )}

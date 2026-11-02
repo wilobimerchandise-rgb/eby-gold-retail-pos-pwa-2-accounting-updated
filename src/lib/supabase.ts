@@ -28,11 +28,6 @@ export function getRememberMePreference(): boolean {
   return readRememberPreference();
 }
 
-/**
- * Changes the session storage mode.
- * Clear both copies of the current project's auth token so an old
- * session cannot unexpectedly reappear after switching modes.
- */
 export function setRememberMePreference(remember: boolean): void {
   try {
     window.localStorage.setItem(REMEMBER_ME_KEY, String(remember));
@@ -44,11 +39,6 @@ export function setRememberMePreference(remember: boolean): void {
   }
 }
 
-/**
- * Supabase session storage:
- * - Remember me enabled: localStorage
- * - Remember me disabled: sessionStorage
- */
 const authStorage = {
   getItem(key: string): string | null {
     try {
@@ -87,12 +77,6 @@ const authStorage = {
   },
 };
 
-/**
- * EbyGold POS Supabase client.
- *
- * Used for authentication, PostgreSQL access,
- * realtime updates and cloud synchronization.
- */
 export const supabase = createClient(
   supabaseUrl,
   supabaseAnonKey,

@@ -293,13 +293,17 @@ ${inventoryList}`;
     }
 
     if (!deepseekResponse.ok) {
+      console.error("DeepSeek API request failed", {
+        status: deepseekResponse.status,
+        statusText: deepseekResponse.statusText,
+      });
+    
       return errorResponse(
         "AI service returned an error. Please try again.",
         502,
         corsHeaders,
       );
     }
-
     let deepseekData: unknown;
 
     try {

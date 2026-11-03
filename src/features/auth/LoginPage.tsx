@@ -12,12 +12,23 @@ interface LoginPageProps {
   onForgotPassword: () => void;
 }
 
+const SAVED_EMAIL_KEY = "eby-gold-saved-email";
+
+function getSavedEmail(): string {
+  try {
+    if (!getRememberMePreference()) return "";
+    return window.localStorage.getItem(SAVED_EMAIL_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
 export function LoginPage({ onForgotPassword }: LoginPageProps) {
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(getSavedEmail);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(
-    () => getRememberMePreference(),
+    getRememberMePreference,
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,13 +39,22 @@ export function LoginPage({ onForgotPassword }: LoginPageProps) {
     setLoading(true);
 
     try {
-      // Apply the selected storage mode before signing in.
       setRememberMePreference(rememberMe);
 
-      const { error: loginError } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
+      if (rememberMe) {
+        window.localStorage.setItem(
+          SAVED_EMAIL_KEY,
+          email.trim(),
+        );
+      } else {
+        window.localStorage.removeItem(SAVED_EMAIL_KEY);
+      }
+
+      const { error: loginError } =
+        await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
 
       if (loginError) {
         setError("Incorrect email or password. Please try again.");
@@ -48,6 +68,18 @@ export function LoginPage({ onForgotPassword }: LoginPageProps) {
       );
     } finally {
       setLoading(false);
+    }
+  }
+
+  function handleRememberMeChange(checked: boolean) {
+    setRememberMe(checked);
+
+    if (!checked) {
+      try {
+        window.localStorage.removeItem(SAVED_EMAIL_KEY);
+      } catch (storageError) {
+        console.error("Could not remove saved email:", storageError);
+      }
     }
   }
 
@@ -79,6 +111,7 @@ export function LoginPage({ onForgotPassword }: LoginPageProps) {
 
             <input
               id="login-email"
+              name="email"
               type="email"
               autoComplete="username"
               required
@@ -100,6 +133,7 @@ export function LoginPage({ onForgotPassword }: LoginPageProps) {
             <div className="relative">
               <input
                 id="login-password"
+                name="password"
                 type={showPassword ? "text" : "password"}
                 autoComplete="current-password"
                 required
@@ -120,21 +154,22 @@ export function LoginPage({ onForgotPassword }: LoginPageProps) {
             </div>
           </div>
 
-          <div className="flex items-center justify-between gap-3">
-            <label
-              htmlFor="remember-me"
-              className="flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-700"
-            >
-              <input
-                id="remember-me"
-                type="checkbox"
-                checked={rememberMe}
-                onChange={(event) => setRememberMe(event.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-indigo-700 focus:ring-indigo-600"
-              />
-              Remember me
-            </label>
-          </div>
+          <label
+            htmlFor="remember-me"
+            className="flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-700"
+          >
+            <input
+              id="remember-me"
+              name="rememberMe"
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(event) =>
+                handleRememberMeChange(event.target.checked)
+              }
+              className="h-4 w-4 rounded border-slate-300 text-indigo-700 focus:ring-indigo-600"
+            />
+            Remember me
+          </label>
 
           {error && (
             <div

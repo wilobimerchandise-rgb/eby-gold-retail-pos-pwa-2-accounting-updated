@@ -1,3 +1,4 @@
+
 import { v4 as uuid } from "uuid";
 
 import {
@@ -19,18 +20,6 @@ import type {
   InventoryStats,
 } from "./types";
 
-/* =========================================================
-   LOCAL INPUT TYPES
-   ========================================================= */
-
-/**
- * Reasons used by the Inventory UI.
- *
- * These are intentionally kept separate from the core
- * StockAdjustmentType because UI reasons such as
- * "supplier_return" and "loss" are more descriptive than
- * the underlying stock accounting types.
- */
 export type StockAdjustmentReason =
   | "restock"
   | "supplier_return"
@@ -41,13 +30,8 @@ export type StockAdjustmentReason =
   | "correction"
   | "other";
 
-export type StockAdjustmentDirection =
-  | "in"
-  | "out";
+export type StockAdjustmentDirection = "in" | "out";
 
-/**
- * Input used by the StockAdjustmentModal.
- */
 export interface AdjustStockInput {
   productId: string;
   direction: StockAdjustmentDirection;
@@ -56,26 +40,18 @@ export interface AdjustStockInput {
   note?: string;
   performedBy?: string;
   staffId?: string;
+  branchId?: string;
 }
 
-/**
- * Input used by physical stock counting.
- *
- * The property names intentionally match the current
- * StockAdjustmentModal.
- */
 export interface ApplyStockCountInput {
   productId: string;
   physicalQuantity: number;
   note?: string;
   performedBy?: string;
   staffId?: string;
+  branchId?: string;
 }
 
-/**
- * Backward-compatible input for callers that use the
- * lower-level stock-adjustment API.
- */
 export interface StockAdjustmentInput {
   productId: string;
   type: StockAdjustmentType;
@@ -83,352 +59,151 @@ export interface StockAdjustmentInput {
   reason: string;
   staffId?: string;
   staffName?: string;
+  branchId?: string;
 }
 
-/**
- * Backward-compatible physical-count input.
- */
 export interface StockCountInput {
   productId: string;
   physicalQuantity: number;
   reason?: string;
   staffId?: string;
   staffName?: string;
+  branchId?: string;
 }
 
-/* =========================================================
-   INVENTORY PRODUCT HELPERS
-   ========================================================= */
-
-/**
- * Converts a core Product into the inventory view model.
- */
-function toInventoryProduct(
-  product: Product,
-): InventoryProduct {
-  const stockQuantity =
-    Number(product.stockQuantity ?? 0);
-
-  const lowStockThreshold =
-    Number(product.lowStockThreshold ?? 0);
-
-  const outOfStock =
-    stockQuantity <= 0;
-
-  const lowStock =
-    !outOfStock &&
-    stockQuantity <= lowStockThreshold;
-
-  const reorderLevel =
-    Number(
-      product.reorderLevel ??
-        lowStockThreshold,
-    );
-
-  const inventoryCostValueKobo =
-    Math.max(0, stockQuantity) *
-    Number(product.costPriceKobo ?? 0);
-
-  const inventoryRetailValueKobo =
-    Math.max(0, stockQuantity) *
-    Number(product.priceKobo ?? 0);
+function toInventoryProduct(product: Product): InventoryProduct {
+  const stockQuantity = Number(product.stockQuantity ?? 0);
+  const lowStockThreshold = Number(product.lowStockThreshold ?? 0);
+  const outOfStock = stockQuantity <= 0;
+  const lowStock = !outOfStock && stockQuantity <= lowStockThreshold;
+  const reorderLevel = Number(product.reorderLevel ?? lowStockThreshold);
 
   return {
     ...product,
-
     stockQuantity,
-
     lowStockThreshold,
-
     reorderLevel,
-
     outOfStock,
-
     lowStock,
-
-    inventoryCostValueKobo,
-
-    inventoryRetailValueKobo,
+    inventoryCostValueKobo:
+      Math.max(0, stockQuantity) * Number(product.costPriceKobo ?? 0),
+    inventoryRetailValueKobo:
+      Math.max(0, stockQuantity) * Number(product.priceKobo ?? 0),
   };
 }
 
-/* =========================================================
-   INVENTORY PRODUCTS
-   ========================================================= */
-
-/**
- * Returns active products prepared for the Inventory page.
- *
- * Inactive products are retained in the database but are not
- * treated as operational inventory items.
- */
-export async function getInventoryProducts(): Promise<
-  InventoryProduct[]
-> {
-  const products =
-    await db.products
-      .orderBy("name")
-      .toArray();
+export async function getInventoryProducts(): Promise<InventoryProduct[]> {
+  const products = await db.products.orderBy("name").toArray();
 
   return products
-    .filter(
-      (product) => product.active,
-    )
+    .filter((product) => product.active)
     .map(toInventoryProduct);
 }
 
-/**
- * Gets one inventory product.
- */
 export async function getInventoryProduct(
   productId: string,
 ): Promise<InventoryProduct | undefined> {
-  const product =
-    await db.products.get(
-      productId,
-    );
+  const product = await db.products.get(productId);
 
-  if (
-    !product ||
-    !product.active
-  ) {
+  if (!product || !product.active) {
     return undefined;
   }
 
-  return toInventoryProduct(
-    product,
-  );
+  return toInventoryProduct(product);
 }
 
-/* =========================================================
-   INVENTORY STATISTICS
-   ========================================================= */
+export async function getInventoryStats(): Promise<InventoryStats> {
+  const products = await db.products.toArray();
+  const activeProducts = products.filter((product) => product.active);
 
-/**
- * Returns complete inventory statistics.
- *
- * Field names match the InventoryPage / InventoryStats
- * contract.
- */
-export async function getInventoryStats(): Promise<
-  InventoryStats
-> {
-  const products =
-    await db.products.toArray();
+  const totalProducts = products.length;
+  const activeProductCount = activeProducts.length;
 
-  const activeProducts =
-    products.filter(
-      (product) =>
-        product.active,
-    );
+  const totalStockUnits = activeProducts.reduce(
+    (total, product) =>
+      total + Math.max(0, Number(product.stockQuantity ?? 0)),
+    0,
+  );
 
-  const totalProducts =
-    products.length;
+  const outOfStockProducts = activeProducts.filter(
+    (product) => Number(product.stockQuantity ?? 0) <= 0,
+  ).length;
 
-  const activeProductCount =
-    activeProducts.length;
+  const lowStockProducts = activeProducts.filter((product) => {
+    const quantity = Number(product.stockQuantity ?? 0);
+    const threshold = Number(product.lowStockThreshold ?? 0);
 
-  const totalStockUnits =
-    activeProducts.reduce(
-      (total, product) =>
-        total +
-        Math.max(
-          0,
-          Number(
-            product.stockQuantity ?? 0,
-          ),
-        ),
-      0,
-    );
+    return quantity > 0 && quantity <= threshold;
+  }).length;
 
-  const outOfStockProducts =
-    activeProducts.filter(
-      (product) =>
-        Number(
-          product.stockQuantity ?? 0,
-        ) <= 0,
-    ).length;
+  const inventoryCostValueKobo = activeProducts.reduce(
+    (total, product) =>
+      total +
+      Math.max(0, Number(product.stockQuantity ?? 0)) *
+        Number(product.costPriceKobo ?? 0),
+    0,
+  );
 
-  const lowStockProducts =
-    activeProducts.filter(
-      (product) => {
-        const quantity =
-          Number(
-            product.stockQuantity ?? 0,
-          );
-
-        const threshold =
-          Number(
-            product.lowStockThreshold ??
-              0,
-          );
-
-        return (
-          quantity > 0 &&
-          quantity <= threshold
-        );
-      },
-    ).length;
-
-  const inventoryCostValueKobo =
-    activeProducts.reduce(
-      (total, product) =>
-        total +
-        Math.max(
-          0,
-          Number(
-            product.stockQuantity ?? 0,
-          ),
-        ) *
-          Number(
-            product.costPriceKobo ?? 0,
-          ),
-      0,
-    );
-
-  const inventorySellingValueKobo =
-    activeProducts.reduce(
-      (total, product) =>
-        total +
-        Math.max(
-          0,
-          Number(
-            product.stockQuantity ?? 0,
-          ),
-        ) *
-          Number(
-            product.priceKobo ?? 0,
-          ),
-      0,
-    );
-
-  const potentialGrossProfitKobo =
-    inventorySellingValueKobo -
-    inventoryCostValueKobo;
+  const inventorySellingValueKobo = activeProducts.reduce(
+    (total, product) =>
+      total +
+      Math.max(0, Number(product.stockQuantity ?? 0)) *
+        Number(product.priceKobo ?? 0),
+    0,
+  );
 
   return {
     totalProducts,
-
-    activeProducts:
-      activeProductCount,
-
+    activeProducts: activeProductCount,
     totalStockUnits,
-
     lowStockProducts,
-
     outOfStockProducts,
-
     inventoryCostValueKobo,
-
     inventorySellingValueKobo,
-
-    potentialGrossProfitKobo,
+    potentialGrossProfitKobo:
+      inventorySellingValueKobo - inventoryCostValueKobo,
   };
 }
 
-/**
- * Returns the core InventorySummary used by reports
- * and other dashboard components.
- */
-export async function getInventorySummary(): Promise<
-  InventorySummary
-> {
-  const stats =
-    await getInventoryStats();
+export async function getInventorySummary(): Promise<InventorySummary> {
+  const stats = await getInventoryStats();
 
   return {
-    totalProducts:
-      stats.totalProducts,
-
-    activeProducts:
-      stats.activeProducts,
-
-    totalUnits:
-      stats.totalStockUnits,
-
-    lowStockProducts:
-      stats.lowStockProducts,
-
-    outOfStockProducts:
-      stats.outOfStockProducts,
-
-    inventoryCostValueKobo:
-      stats.inventoryCostValueKobo,
-
-    inventoryRetailValueKobo:
-      stats.inventorySellingValueKobo,
+    totalProducts: stats.totalProducts,
+    activeProducts: stats.activeProducts,
+    totalUnits: stats.totalStockUnits,
+    lowStockProducts: stats.lowStockProducts,
+    outOfStockProducts: stats.outOfStockProducts,
+    inventoryCostValueKobo: stats.inventoryCostValueKobo,
+    inventoryRetailValueKobo: stats.inventorySellingValueKobo,
   };
 }
 
-/* =========================================================
-   STOCK MOVEMENT LABELS
-   ========================================================= */
-
-/**
- * Human-readable labels for inventory movements.
- */
 export function getStockMovementLabel(
   type: StockMovementType | string,
 ): string {
-  const labels: Record<
-    string,
-    string
-  > = {
-    opening_stock:
-      "Opening Stock",
-
-    purchase:
-      "Stock Purchase",
-
-    sale:
-      "Sale",
-
-    sale_return:
-      "Sale Return",
-
-    customer_return:
-      "Customer Return",
-
-    adjustment_in:
-      "Stock Increase",
-
-    adjustment_out:
-      "Stock Decrease",
-
-    damage:
-      "Damaged Stock",
-
-    expired:
-      "Expired Stock",
-
-    transfer_in:
-      "Stock Transfer In",
-
-    transfer_out:
-      "Stock Transfer Out",
-
-    stock_count:
-      "Physical Stock Count",
+  const labels: Record<string, string> = {
+    opening_stock: "Opening Stock",
+    purchase: "Stock Purchase",
+    sale: "Sale",
+    sale_return: "Sale Return",
+    customer_return: "Customer Return",
+    adjustment_in: "Stock Increase",
+    adjustment_out: "Stock Decrease",
+    damage: "Damaged Stock",
+    expired: "Expired Stock",
+    transfer_in: "Stock Transfer In",
+    transfer_out: "Stock Transfer Out",
+    stock_count: "Physical Stock Count",
   };
 
   return (
     labels[type] ??
-    type
-      .replace(/_/g, " ")
-      .replace(
-        /\b\w/g,
-        (letter) =>
-          letter.toUpperCase(),
-      )
+    type.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())
   );
 }
 
-/**
- * Returns whether a movement increases stock.
- */
-export function isStockIncrease(
-  type: StockMovementType,
-): boolean {
+export function isStockIncrease(type: StockMovementType): boolean {
   return [
     "opening_stock",
     "purchase",
@@ -439,12 +214,7 @@ export function isStockIncrease(
   ].includes(type);
 }
 
-/**
- * Returns whether a movement decreases stock.
- */
-export function isStockDecrease(
-  type: StockMovementType,
-): boolean {
+export function isStockDecrease(type: StockMovementType): boolean {
   return [
     "sale",
     "adjustment_out",
@@ -454,67 +224,26 @@ export function isStockDecrease(
   ].includes(type);
 }
 
-/* =========================================================
-   STOCK MOVEMENTS
-   ========================================================= */
-
-/**
- * Gets stock movement history.
- */
 export async function getStockMovements(
   productId?: string,
 ): Promise<StockMovement[]> {
-  if (productId) {
-    const movements =
-      await db.stockMovements
-        .where("productId")
-        .equals(productId)
-        .toArray();
-
-    return movements.sort(
-      (a, b) =>
-        new Date(
-          b.createdAt,
-        ).getTime() -
-        new Date(
-          a.createdAt,
-        ).getTime(),
-    );
-  }
-
-  const movements =
-    await db.stockMovements.toArray();
+  const movements = productId
+    ? await db.stockMovements.where("productId").equals(productId).toArray()
+    : await db.stockMovements.toArray();
 
   return movements.sort(
     (a, b) =>
-      new Date(
-        b.createdAt,
-      ).getTime() -
-      new Date(
-        a.createdAt,
-      ).getTime(),
+      new Date(b.createdAt).getTime() -
+      new Date(a.createdAt).getTime(),
   );
 }
 
-/**
- * Gets movements for a single product.
- */
 export async function getProductStockMovements(
   productId: string,
 ): Promise<StockMovement[]> {
-  return getStockMovements(
-    productId,
-  );
+  return getStockMovements(productId);
 }
 
-/* =========================================================
-   REASON / TYPE HELPERS
-   ========================================================= */
-
-/**
- * Converts a UI reason into the canonical stock
- * adjustment type.
- */
 function reasonToAdjustmentType(
   reason: StockAdjustmentReason,
   direction: StockAdjustmentDirection,
@@ -522,32 +251,22 @@ function reasonToAdjustmentType(
   switch (reason) {
     case "damage":
       return "damage";
-
     case "expiry":
       return "expired";
-
     case "correction":
       return "correction";
-
     case "restock":
     case "found":
       return "increase";
-
     case "supplier_return":
     case "loss":
       return "decrease";
-
     case "other":
     default:
-      return direction === "in"
-        ? "increase"
-        : "decrease";
+      return direction === "in" ? "increase" : "decrease";
   }
 }
 
-/**
- * Converts canonical adjustment type into movement type.
- */
 function adjustmentTypeToMovementType(
   type: StockAdjustmentType,
   quantityChange: number,
@@ -555,37 +274,19 @@ function adjustmentTypeToMovementType(
   switch (type) {
     case "increase":
       return "adjustment_in";
-
     case "decrease":
       return "adjustment_out";
-
     case "damage":
       return "damage";
-
     case "expired":
       return "expired";
-
     case "correction":
-      return quantityChange >= 0
-        ? "adjustment_in"
-        : "adjustment_out";
-
+      return quantityChange >= 0 ? "adjustment_in" : "adjustment_out";
     default:
-      return quantityChange >= 0
-        ? "adjustment_in"
-        : "adjustment_out";
+      return quantityChange >= 0 ? "adjustment_in" : "adjustment_out";
   }
 }
 
-/* =========================================================
-   APPLY STOCK ADJUSTMENT
-   ========================================================= */
-
-/**
- * Low-level stock adjustment operation.
- *
- * This is the canonical inventory mutation function.
- */
 export async function applyStockAdjustment(
   input: StockAdjustmentInput,
 ): Promise<{
@@ -593,260 +294,123 @@ export async function applyStockAdjustment(
   movement: StockMovement;
   product: Product;
 }> {
-  const now =
-    new Date().toISOString();
+  const now = new Date().toISOString();
+  const adjustmentId = uuid();
+  const movementId = uuid();
 
-  const adjustmentId =
-    uuid();
+  const result = await db.transaction(
+    "rw",
+    db.products,
+    db.stockAdjustments,
+    db.stockMovements,
+    async () => {
+      const product = await db.products.get(input.productId);
 
-  const movementId =
-    uuid();
+      if (!product) {
+        throw new Error("Product not found");
+      }
 
-  const result =
-    await db.transaction(
-      "rw",
-      db.products,
-      db.stockAdjustments,
-      db.stockMovements,
-      async () => {
-        const product =
-          await db.products.get(
-            input.productId,
-          );
+      if (!product.active) {
+        throw new Error("Cannot adjust an inactive product");
+      }
 
-        if (!product) {
-          throw new Error(
-            "Product not found",
-          );
-        }
+      const quantityBefore = Number(product.stockQuantity ?? 0);
+      let quantityChange = Number(input.quantityChange);
 
-        if (!product.active) {
-          throw new Error(
-            "Cannot adjust an inactive product",
-          );
-        }
-
-        const quantityBefore =
-          Number(
-            product.stockQuantity ?? 0,
-          );
-
-        let quantityChange =
-          Number(
-            input.quantityChange,
-          );
-
-        if (
-          !Number.isFinite(
-            quantityChange,
-          ) ||
-          quantityChange === 0
-        ) {
-          throw new Error(
-            "Stock adjustment quantity must be greater than zero",
-          );
-        }
-
-        /**
-         * Normalize the sign according to the adjustment
-         * type.
-         */
-        if (
-          input.type === "increase"
-        ) {
-          quantityChange =
-            Math.abs(
-              quantityChange,
-            );
-        } else {
-          quantityChange =
-            -Math.abs(
-              quantityChange,
-            );
-        }
-
-        const quantityAfter =
-          quantityBefore +
-          quantityChange;
-
-        if (
-          quantityAfter < 0
-        ) {
-          throw new Error(
-            `Cannot remove ${Math.abs(
-              quantityChange,
-            )} units. Only ${quantityBefore} units are currently in stock.`,
-          );
-        }
-
-        const reason =
-          input.reason.trim() ||
-          "Manual stock adjustment";
-
-        const movementType =
-          adjustmentTypeToMovementType(
-            input.type,
-            quantityChange,
-          );
-
-        const adjustment: StockAdjustment = {
-          id:
-            adjustmentId,
-
-          productId:
-            product.id,
-
-          type:
-            input.type,
-
-          quantityBefore,
-
-          quantityChange,
-
-          quantityAfter,
-
-          reason,
-
-          staffId:
-            input.staffId,
-
-          staffName:
-            input.staffName,
-
-          createdAt:
-            now,
-        };
-
-        const movement: StockMovement = {
-          id:
-            movementId,
-
-          productId:
-            product.id,
-
-          productNameSnapshot:
-            product.name,
-
-          type:
-            movementType,
-
-          quantityChange,
-
-          quantityBefore,
-
-          quantityAfter,
-
-          unitCostKobo:
-            product.costPriceKobo,
-
-          referenceId:
-            adjustmentId,
-
-          referenceType:
-            "stock_adjustment",
-
-          reason,
-
-          staffId:
-            input.staffId,
-
-          staffName:
-            input.staffName,
-
-          createdAt:
-            now,
-        };
-
-        const updatedProduct: Product = {
-          ...product,
-
-          stockQuantity:
-            quantityAfter,
-
-          updatedAt:
-            now,
-        };
-
-        await db.products.put(
-          updatedProduct,
+      if (!Number.isFinite(quantityChange) || quantityChange === 0) {
+        throw new Error(
+          "Stock adjustment quantity must be greater than zero",
         );
+      }
 
-        await db.stockAdjustments.add(
-          adjustment,
+      quantityChange =
+        input.type === "increase"
+          ? Math.abs(quantityChange)
+          : -Math.abs(quantityChange);
+
+      const quantityAfter = quantityBefore + quantityChange;
+
+      if (quantityAfter < 0) {
+        throw new Error(
+          `Cannot remove ${Math.abs(quantityChange)} units. Only ${quantityBefore} units are currently in stock.`,
         );
+      }
 
-        await db.stockMovements.add(
-          movement,
-        );
+      const reason = input.reason.trim() || "Manual stock adjustment";
+      const movementType = adjustmentTypeToMovementType(
+        input.type,
+        quantityChange,
+      );
 
-        return {
-          adjustment,
+      const adjustment: StockAdjustment = {
+        id: adjustmentId,
+        productId: product.id,
+        type: input.type,
+        quantityBefore,
+        quantityChange,
+        quantityAfter,
+        reason,
+        staffId: input.staffId,
+        staffName: input.staffName,
+        createdAt: now,
+      };
 
-          movement,
+      const movement: StockMovement = {
+        id: movementId,
+        productId: product.id,
+        productNameSnapshot: product.name,
+        type: movementType,
+        quantityChange,
+        quantityBefore,
+        quantityAfter,
+        unitCostKobo: product.costPriceKobo,
+        referenceId: adjustmentId,
+        referenceType: "stock_adjustment",
+        reason,
+        staffId: input.staffId,
+        staffName: input.staffName,
+        branchId: input.branchId,
+        createdAt: now,
+      };
 
-          product:
-            updatedProduct,
-        };
-      },
-    );
+      const updatedProduct: Product = {
+        ...product,
+        stockQuantity: quantityAfter,
+        updatedAt: now,
+      };
 
-  /**
-   * Audit logging happens after the transaction succeeds.
-   *
-   * Therefore an audit event can never describe an inventory
-   * mutation that failed and was rolled back.
-   */
+      await db.products.put(updatedProduct);
+      await db.stockAdjustments.add(adjustment);
+      await db.stockMovements.add(movement);
+
+      return {
+        adjustment,
+        movement,
+        product: updatedProduct,
+      };
+    },
+  );
+
   await logAuditEvent(
     "stock_adjustment",
     `Stock adjusted for ${result.product.name}`,
     {
-      productId:
-        result.product.id,
-
-      adjustmentId:
-        result.adjustment.id,
-
-      type:
-        result.adjustment.type,
-
-      quantityBefore:
-        result.adjustment.quantityBefore,
-
-      quantityChange:
-        result.adjustment.quantityChange,
-
-      quantityAfter:
-        result.adjustment.quantityAfter,
-
-      reason:
-        result.adjustment.reason,
-
-      staffName:
-        result.adjustment.staffName,
+      productId: result.product.id,
+      adjustmentId: result.adjustment.id,
+      type: result.adjustment.type,
+      quantityBefore: result.adjustment.quantityBefore,
+      quantityChange: result.adjustment.quantityChange,
+      quantityAfter: result.adjustment.quantityAfter,
+      reason: result.adjustment.reason,
+      staffId: result.adjustment.staffId,
+      staffName: result.adjustment.staffName,
+      branchId: result.movement.branchId,
     },
   );
 
   return result;
 }
 
-/* =========================================================
-   ADJUST STOCK
-   ========================================================= */
-
-/**
- * Public function used by StockAdjustmentModal.
- *
- * Example:
- *
- * adjustStock({
- *   productId,
- *   direction: "in",
- *   quantity: 10,
- *   reason: "restock",
- *   note: "Supplier delivery",
- *   performedBy: "John"
- * })
- */
 export async function adjustStock(
   input: AdjustStockInput,
 ): Promise<{
@@ -854,80 +418,37 @@ export async function adjustStock(
   movement: StockMovement;
   product: Product;
 }> {
-  if (
-    !input.productId
-  ) {
-    throw new Error(
-      "Product is required",
-    );
+  if (!input.productId) {
+    throw new Error("Product is required");
   }
 
-  const quantity =
-    Math.round(
-      Number(input.quantity),
-    );
+  const quantity = Math.round(Number(input.quantity));
 
-  if (
-    !Number.isFinite(quantity) ||
-    quantity <= 0
-  ) {
-    throw new Error(
-      "Quantity must be greater than zero",
-    );
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    throw new Error("Quantity must be greater than zero");
   }
 
-  const adjustmentType =
-    reasonToAdjustmentType(
-      input.reason,
-      input.direction,
-    );
+  const adjustmentType = reasonToAdjustmentType(
+    input.reason,
+    input.direction,
+  );
 
-  const reasonText =
-    getAdjustmentReasonLabel(
-      input.reason,
-    );
-
-  const combinedReason =
-    input.note?.trim()
-      ? `${reasonText}: ${input.note.trim()}`
-      : reasonText;
+  const reasonText = getAdjustmentReasonLabel(input.reason);
+  const combinedReason = input.note?.trim()
+    ? `${reasonText}: ${input.note.trim()}`
+    : reasonText;
 
   return applyStockAdjustment({
-    productId:
-      input.productId,
-
-    type:
-      adjustmentType,
-
-    quantityChange:
-      input.direction === "in"
-        ? quantity
-        : -quantity,
-
-    reason:
-      combinedReason,
-
-    staffId:
-      input.staffId,
-
-    staffName:
-      input.performedBy?.trim() ||
-      undefined,
+    productId: input.productId,
+    type: adjustmentType,
+    quantityChange: input.direction === "in" ? quantity : -quantity,
+    reason: combinedReason,
+    staffId: input.staffId,
+    staffName: input.performedBy?.trim() || undefined,
+    branchId: input.branchId,
   });
 }
 
-/* =========================================================
-   APPLY PHYSICAL STOCK COUNT
-   ========================================================= */
-
-/**
- * Applies a physical stock count.
- *
- * IMPORTANT:
- * If the physical quantity exactly matches the recorded
- * quantity, no database mutation is performed and null is
- * returned. This matches the StockAdjustmentModal contract.
- */
 export async function applyStockCount(
   input: ApplyStockCountInput,
 ): Promise<{
@@ -935,194 +456,95 @@ export async function applyStockCount(
   movement: StockMovement;
   product: Product;
 } | null> {
-  const physicalQuantity =
-    Math.round(
-      Number(
-        input.physicalQuantity,
-      ),
-    );
+  const physicalQuantity = Math.round(Number(input.physicalQuantity));
 
-  if (
-    !Number.isFinite(
-      physicalQuantity,
-    ) ||
-    physicalQuantity < 0
-  ) {
-    throw new Error(
-      "Physical quantity must be zero or greater",
-    );
+  if (!Number.isFinite(physicalQuantity) || physicalQuantity < 0) {
+    throw new Error("Physical quantity must be zero or greater");
   }
 
-  const now =
-    new Date().toISOString();
+  const now = new Date().toISOString();
+  const adjustmentId = uuid();
+  const movementId = uuid();
 
-  const adjustmentId =
-    uuid();
+  const result = await db.transaction(
+    "rw",
+    db.products,
+    db.stockAdjustments,
+    db.stockMovements,
+    async () => {
+      const product = await db.products.get(input.productId);
 
-  const movementId =
-    uuid();
+      if (!product) {
+        throw new Error("Product not found");
+      }
 
-  const result =
-    await db.transaction(
-      "rw",
-      db.products,
-      db.stockAdjustments,
-      db.stockMovements,
-      async () => {
-        const product =
-          await db.products.get(
-            input.productId,
-          );
+      if (!product.active) {
+        throw new Error("Cannot count an inactive product");
+      }
 
-        if (!product) {
-          throw new Error(
-            "Product not found",
-          );
-        }
+      const quantityBefore = Number(product.stockQuantity ?? 0);
+      const quantityAfter = physicalQuantity;
+      const quantityChange = quantityAfter - quantityBefore;
 
-        if (!product.active) {
-          throw new Error(
-            "Cannot count an inactive product",
-          );
-        }
+      if (quantityChange === 0) {
+        return null;
+      }
 
-        const quantityBefore =
-          Number(
-            product.stockQuantity ?? 0,
-          );
+      const reason = input.note?.trim()
+        ? `Physical stock count: ${input.note.trim()}`
+        : "Physical stock count";
 
-        const quantityAfter =
-          physicalQuantity;
+      const staffName = input.performedBy?.trim() || undefined;
 
-        const quantityChange =
-          quantityAfter -
-          quantityBefore;
+      const adjustment: StockAdjustment = {
+        id: adjustmentId,
+        productId: product.id,
+        type: "correction",
+        quantityBefore,
+        quantityChange,
+        quantityAfter,
+        reason,
+        staffId: input.staffId,
+        staffName,
+        createdAt: now,
+      };
 
-        /**
-         * No difference means there is nothing to record.
-         */
-        if (
-          quantityChange === 0
-        ) {
-          return null;
-        }
+      const movement: StockMovement = {
+        id: movementId,
+        productId: product.id,
+        productNameSnapshot: product.name,
+        type: "stock_count",
+        quantityChange,
+        quantityBefore,
+        quantityAfter,
+        unitCostKobo: product.costPriceKobo,
+        referenceId: adjustmentId,
+        referenceType: "stock_count",
+        reason,
+        staffId: input.staffId,
+        staffName,
+        branchId: input.branchId,
+        createdAt: now,
+      };
 
-        const reason =
-          input.note?.trim()
-            ? `Physical stock count: ${input.note.trim()}`
-            : "Physical stock count";
+      const updatedProduct: Product = {
+        ...product,
+        stockQuantity: quantityAfter,
+        updatedAt: now,
+      };
 
-        /**
-         * Physical counts are represented as a correction
-         * in StockAdjustment because the count can move either
-         * direction.
-         */
-        const adjustment: StockAdjustment = {
-          id:
-            adjustmentId,
+      await db.products.put(updatedProduct);
+      await db.stockAdjustments.add(adjustment);
+      await db.stockMovements.add(movement);
 
-          productId:
-            product.id,
+      return {
+        adjustment,
+        movement,
+        product: updatedProduct,
+      };
+    },
+  );
 
-          type:
-            "correction",
-
-          quantityBefore,
-
-          quantityChange,
-
-          quantityAfter,
-
-          reason,
-
-          staffId:
-            input.staffId,
-
-          staffName:
-            input.performedBy?.trim() ||
-            undefined,
-
-          createdAt:
-            now,
-        };
-
-        const movement: StockMovement = {
-          id:
-            movementId,
-
-          productId:
-            product.id,
-
-          productNameSnapshot:
-            product.name,
-
-          type:
-            "stock_count",
-
-          quantityChange,
-
-          quantityBefore,
-
-          quantityAfter,
-
-          unitCostKobo:
-            product.costPriceKobo,
-
-          referenceId:
-            adjustmentId,
-
-          referenceType:
-            "stock_count",
-
-          reason,
-
-          staffId:
-            input.staffId,
-
-          staffName:
-            input.performedBy?.trim() ||
-            undefined,
-
-          createdAt:
-            now,
-        };
-
-        const updatedProduct: Product = {
-          ...product,
-
-          stockQuantity:
-            quantityAfter,
-
-          updatedAt:
-            now,
-        };
-
-        await db.products.put(
-          updatedProduct,
-        );
-
-        await db.stockAdjustments.add(
-          adjustment,
-        );
-
-        await db.stockMovements.add(
-          movement,
-        );
-
-        return {
-          adjustment,
-
-          movement,
-
-          product:
-            updatedProduct,
-        };
-      },
-    );
-
-  /**
-   * No inventory difference.
-   */
   if (!result) {
     return null;
   }
@@ -1131,302 +553,150 @@ export async function applyStockCount(
     "stock_count",
     `Physical stock count completed for ${result.product.name}`,
     {
-      productId:
-        result.product.id,
-
-      adjustmentId:
-        result.adjustment.id,
-
-      quantityBefore:
-        result.movement.quantityBefore,
-
-      physicalQuantity:
-        result.movement.quantityAfter,
-
-      quantityChange:
-        result.movement.quantityChange,
-
-      reason:
-        result.movement.reason,
-
-      staffName:
-        result.movement.staffName,
+      productId: result.product.id,
+      adjustmentId: result.adjustment.id,
+      quantityBefore: result.movement.quantityBefore,
+      physicalQuantity: result.movement.quantityAfter,
+      quantityChange: result.movement.quantityChange,
+      reason: result.movement.reason,
+      staffId: result.movement.staffId,
+      staffName: result.movement.staffName,
+      branchId: result.movement.branchId,
     },
   );
 
   return result;
 }
 
-/* =========================================================
-   REASON LABELS
-   ========================================================= */
-
-/**
- * Converts the internal UI reason into a readable label.
- */
 export function getAdjustmentReasonLabel(
   reason: StockAdjustmentReason,
 ): string {
-  const labels: Record<
-    StockAdjustmentReason,
-    string
-  > = {
-    restock:
-      "New Stock / Restock",
-
-    supplier_return:
-      "Supplier Return",
-
-    damage:
-      "Damaged Goods",
-
-    expiry:
-      "Expired Goods",
-
-    loss:
-      "Lost / Missing Stock",
-
-    found:
-      "Found Stock",
-
-    correction:
-      "Inventory Correction",
-
-    other:
-      "Other",
+  const labels: Record<StockAdjustmentReason, string> = {
+    restock: "New Stock / Restock",
+    supplier_return: "Supplier Return",
+    damage: "Damaged Goods",
+    expiry: "Expired Goods",
+    loss: "Lost / Missing Stock",
+    found: "Found Stock",
+    correction: "Inventory Correction",
+    other: "Other",
   };
 
   return labels[reason];
 }
 
-/* =========================================================
-   QUICK STOCK OPERATIONS
-   ========================================================= */
-
-/**
- * Adds stock.
- */
 export async function addStock(
   productId: string,
   quantity: number,
   reason: string,
   staffName?: string,
 ): Promise<void> {
-  if (
-    !Number.isFinite(quantity) ||
-    quantity <= 0
-  ) {
-    throw new Error(
-      "Quantity must be greater than zero",
-    );
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    throw new Error("Quantity must be greater than zero");
   }
 
   await applyStockAdjustment({
     productId,
-
-    type:
-      "increase",
-
-    quantityChange:
-      Math.abs(
-        Math.round(quantity),
-      ),
-
+    type: "increase",
+    quantityChange: Math.abs(Math.round(quantity)),
     reason,
-
     staffName,
   });
 }
 
-/**
- * Removes stock.
- */
 export async function removeStock(
   productId: string,
   quantity: number,
   reason: string,
   staffName?: string,
 ): Promise<void> {
-  if (
-    !Number.isFinite(quantity) ||
-    quantity <= 0
-  ) {
-    throw new Error(
-      "Quantity must be greater than zero",
-    );
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    throw new Error("Quantity must be greater than zero");
   }
 
   await applyStockAdjustment({
     productId,
-
-    type:
-      "decrease",
-
-    quantityChange:
-      -Math.abs(
-        Math.round(quantity),
-      ),
-
+    type: "decrease",
+    quantityChange: -Math.abs(Math.round(quantity)),
     reason,
-
     staffName,
   });
 }
 
-/**
- * Records damaged stock.
- */
 export async function recordDamagedStock(
   productId: string,
   quantity: number,
   reason: string,
   staffName?: string,
 ): Promise<void> {
-  if (
-    !Number.isFinite(quantity) ||
-    quantity <= 0
-  ) {
-    throw new Error(
-      "Quantity must be greater than zero",
-    );
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    throw new Error("Quantity must be greater than zero");
   }
 
   await applyStockAdjustment({
     productId,
-
-    type:
-      "damage",
-
-    quantityChange:
-      -Math.abs(
-        Math.round(quantity),
-      ),
-
+    type: "damage",
+    quantityChange: -Math.abs(Math.round(quantity)),
     reason,
-
     staffName,
   });
 }
 
-/**
- * Records expired stock.
- */
 export async function recordExpiredStock(
   productId: string,
   quantity: number,
   reason: string,
   staffName?: string,
 ): Promise<void> {
-  if (
-    !Number.isFinite(quantity) ||
-    quantity <= 0
-  ) {
-    throw new Error(
-      "Quantity must be greater than zero",
-    );
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    throw new Error("Quantity must be greater than zero");
   }
 
   await applyStockAdjustment({
     productId,
-
-    type:
-      "expired",
-
-    quantityChange:
-      -Math.abs(
-        Math.round(quantity),
-      ),
-
+    type: "expired",
+    quantityChange: -Math.abs(Math.round(quantity)),
     reason,
-
     staffName,
   });
 }
 
-/* =========================================================
-   LOW STOCK HELPERS
-   ========================================================= */
+export async function getLowStockProducts(): Promise<Product[]> {
+  const products = await db.products.toArray();
 
-/**
- * Returns active products currently below their
- * low-stock threshold.
- */
-export async function getLowStockProducts(): Promise<
-  Product[]
-> {
-  const products =
-    await db.products.toArray();
+  return products.filter((product) => {
+    if (!product.active) {
+      return false;
+    }
 
-  return products.filter(
-    (product) => {
-      if (!product.active) {
-        return false;
-      }
+    const quantity = Number(product.stockQuantity ?? 0);
+    const threshold = Number(product.lowStockThreshold ?? 0);
 
-      const quantity =
-        Number(
-          product.stockQuantity ?? 0,
-        );
-
-      const threshold =
-        Number(
-          product.lowStockThreshold ??
-            0,
-        );
-
-      return (
-        quantity > 0 &&
-        quantity <= threshold
-      );
-    },
-  );
+    return quantity > 0 && quantity <= threshold;
+  });
 }
 
-/**
- * Returns active out-of-stock products.
- */
-export async function getOutOfStockProducts(): Promise<
-  Product[]
-> {
-  const products =
-    await db.products.toArray();
+export async function getOutOfStockProducts(): Promise<Product[]> {
+  const products = await db.products.toArray();
 
   return products.filter(
     (product) =>
-      product.active &&
-      Number(
-        product.stockQuantity ?? 0,
-      ) <= 0,
+      product.active && Number(product.stockQuantity ?? 0) <= 0,
   );
 }
 
-/**
- * Returns active products that should be reordered.
- */
-export async function getReorderProducts(): Promise<
-  Product[]
-> {
-  const products =
-    await db.products.toArray();
+export async function getReorderProducts(): Promise<Product[]> {
+  const products = await db.products.toArray();
 
-  return products.filter(
-    (product) => {
-      if (!product.active) {
-        return false;
-      }
+  return products.filter((product) => {
+    if (!product.active) {
+      return false;
+    }
 
-      const reorderLevel =
-        Number(
-          product.reorderLevel ??
-            product.lowStockThreshold ??
-            0,
-        );
+    const reorderLevel = Number(
+      product.reorderLevel ?? product.lowStockThreshold ?? 0,
+    );
 
-      return (
-        Number(
-          product.stockQuantity ?? 0,
-        ) <= reorderLevel
-      );
-    },
-  );
+    return Number(product.stockQuantity ?? 0) <= reorderLevel;
+  });
 }

@@ -50,6 +50,7 @@ import {
 
 import { toast } from "@/components/Toast";
 import { useCart } from "./cart-context";
+import { useAuth } from "@/features/auth/AuthProvider";
 import { CheckoutModal } from "./CheckoutModal";
 import { ReceiptModal } from "./ReceiptModal";
 import { SalesHistory } from "./SalesHistory";
@@ -68,6 +69,8 @@ export function PosPage() {
     prefillCustomer,
     setPrefillCustomer,
   } = useCart();
+
+  const { profile, deviceId } = useAuth();
 
   /* =======================================================
      STATE
@@ -608,6 +611,24 @@ export function PosPage() {
   ) => {
     if (checkoutInProgress.current) return;
 
+    const authenticatedProfile = profile;
+
+    if (
+      !authenticatedProfile?.id ||
+      !authenticatedProfile.organization_id ||
+      !authenticatedProfile.branch_id
+    ) {
+      toast(
+        "error",
+        "Your staff profile is incomplete. Refresh your profile before completing a sale.",
+      );
+      return;
+    }
+
+    const cashierName =
+      authenticatedProfile.full_name?.trim() ||
+      authenticatedProfile.email;
+
     if (cart.length === 0) {
       toast(
         "error",
@@ -808,7 +829,9 @@ export function PosPage() {
                 referenceId: saleId,
                 referenceType: "sale",
                 reason: `Sale ${receiptNo}`,
-                staffName: "System",
+                staffId: authenticatedProfile.id,
+                staffName: cashierName,
+                branchId: authenticatedProfile.branch_id,
                 createdAt: now,
               });
 
@@ -850,6 +873,9 @@ export function PosPage() {
                 customerName || undefined,
               customerPhone:
                 customerPhone || undefined,
+              cashierId: authenticatedProfile.id,
+              cashierName,
+              branchId: authenticatedProfile.branch_id,
             };
 
             await db.sales.add(sale);
@@ -944,6 +970,11 @@ export function PosPage() {
           totalKobo: result.totalKobo,
           amountPaidKobo,
           itemCount: cart.length,
+          cashierId: authenticatedProfile.id,
+          cashierName,
+          organizationId: authenticatedProfile.organization_id,
+          branchId: authenticatedProfile.branch_id,
+          deviceId: deviceId ?? undefined,
         },
       );
 

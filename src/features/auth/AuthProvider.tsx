@@ -1,4 +1,3 @@
-
 import {
   createContext,
   useCallback,
@@ -16,6 +15,8 @@ export interface AuthProfile {
   email: string;
   full_name: string | null;
   role: string;
+  organization_id: string;
+  branch_id: string;
 }
 
 type AuthStatus = "loading" | "authenticated" | "unauthenticated" | "error";
@@ -56,7 +57,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     const { data, error: profileError } = await supabase
       .from("users")
-      .select("id, email, full_name, role")
+      .select(
+        "id, email, full_name, role, organization_id, branch_id"
+      )
       .eq("id", currentSession.user.id)
       .maybeSingle();
 
@@ -80,6 +83,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
       email: data.email,
       full_name: data.full_name,
       role: data.role,
+      organization_id: data.organization_id,
+      branch_id: data.branch_id,
     });
 
     setStatus("authenticated");
@@ -123,7 +128,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       const { data, error: profileError } = await supabase
         .from("users")
-        .select("id, email, full_name, role")
+        .select(
+          "id, email, full_name, role, organization_id, branch_id"
+        )
         .eq("id", nextSession.user.id)
         .maybeSingle();
 
@@ -151,6 +158,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
         email: data.email,
         full_name: data.full_name,
         role: data.role,
+        organization_id: data.organization_id,
+        branch_id: data.branch_id,
       });
 
       setStatus("authenticated");

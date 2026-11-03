@@ -1,3 +1,4 @@
+
 import {
   createContext,
   useCallback,
@@ -9,6 +10,7 @@ import {
 import type { Session } from "@supabase/supabase-js";
 
 import { supabase } from "@/lib/supabase";
+import { getOrCreateDeviceId } from "@/lib/device-identity";
 
 export interface AuthProfile {
   id: string;
@@ -27,6 +29,8 @@ interface AuthContextValue {
   status: AuthStatus;
   error: string | null;
   recoveryMode: boolean;
+  deviceId: string | null;
+  deviceIdentityError: string | null;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
@@ -43,6 +47,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [error, setError] = useState<string | null>(null);
   const [recoveryMode, setRecoveryMode] = useState(false);
+  const [deviceId, setDeviceId] = useState<string | null>(null);
+  const [deviceIdentityError, setDeviceIdentityError] = useState<string | null>(
+    null
+  );
 
   const loadProfile = useCallback(async (currentSession: Session | null) => {
     if (!currentSession) {
@@ -57,9 +65,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     const { data, error: profileError } = await supabase
       .from("users")
-      .select(
-        "id, email, full_name, role, organization_id, branch_id"
-      )
+      .select("id, email, full_name, role, organization_id, branch_id")
       .eq("id", currentSession.user.id)
       .maybeSingle();
 
@@ -104,6 +110,25 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, [loadProfile]);
 
   useEffect(() => {
+    try {
+      const currentDeviceId = getOrCreateDeviceId();
+
+      setDeviceId(currentDeviceId);
+      setDeviceIdentityError(null);
+    } catch (deviceError) {
+      setDeviceId(null);
+
+      setDeviceIdentityError(
+        deviceError instanceof Error
+          ? deviceError.message
+          : "Unable to initialize this POS device identity."
+      );
+
+      console.error("Device identity initialization failed:", deviceError);
+    }
+  }, []);
+
+  useEffect(() => {
     let active = true;
     let requestNumber = 0;
 
@@ -128,9 +153,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       const { data, error: profileError } = await supabase
         .from("users")
-        .select(
-          "id, email, full_name, role, organization_id, branch_id"
-        )
+        .select("id, email, full_name, role, organization_id, branch_id")
         .eq("id", nextSession.user.id)
         .maybeSingle();
 
@@ -218,6 +241,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
     status,
     error,
     recoveryMode,
+    deviceId,
+    deviceIdentityError,
     signOut,
     refreshProfile,
   };
